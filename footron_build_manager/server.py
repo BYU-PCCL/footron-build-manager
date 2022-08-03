@@ -321,7 +321,10 @@ def handle_workflow_run_completed(event):
                     "--delete",
                     "-e",
                     rsync_ssh_production_command(),
-                    f'{str(temp_path)}/{{folders.toml,tags.toml,collections.toml}}',
+                    *(
+                        f"{str(temp_path)}/{file}.toml"
+                        for file in ["folders", "tags", "collections"]
+                    ),
                     str(target.controller_path),
                 ]
             )
