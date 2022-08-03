@@ -23,5 +23,9 @@ def load_build_data() -> BuildData:
 
 
 def save_build_data(build_data: BuildData) -> None:
+    if not DATA_PATH.exists():
+        DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DATA_PATH.touch()
+
     with open(DATA_PATH, "w") as data_file:
         json.dump(build_data.dict(), data_file)
