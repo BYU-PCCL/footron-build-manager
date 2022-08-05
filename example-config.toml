@@ -2,11 +2,9 @@
 [targets.production]
 controller_path = "ft@<production-controller-host>:/home/ft/.local/share/footron/"
 web_path = "footron@<production-web-host>:/var/www/footron.byu.edu/html/"
-colors_path = "remote@<production-web-host>:/home/remote/.local/share/footron-api/colors.json"
 controller_api_url = "http://<production-controller-host>:8000/"
 
 [targets.staging]
 controller_path = "ft@<staging-host>:/home/ft/.local/share/footron/"
 web_path = "ft@<staging-host>:/var/www/ft1s.cs.byu.edu/html/"
-colors_path = "ft@<staging-host>:/home/ft/.local/share/footron-api/colors.json"
 controller_api_url = "http://<staging-host>:8000/"
