@@ -326,7 +326,7 @@ def handle_workflow_job_queued(event):
             "build-experiences",
             "build-controls",
         ]
-        or run_response["branch"] not in config.targets
+        or run_response["head_branch"] not in config.targets
     ):
         return
 
