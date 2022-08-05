@@ -9,7 +9,6 @@ from .constants import CONFIG_PATH
 class Target(BaseModel):
     controller_path: str
     web_path: str
-    colors_path: str
     controller_api_url: str
 
     @property

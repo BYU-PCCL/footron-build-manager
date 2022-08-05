@@ -99,21 +99,17 @@ def handle_workflow_run_completed(event):
         artifacts = artifacts_response["artifacts"]
 
         experiences_build_url = None
-        colors_build_url = None
         for artifact in artifacts:
             if artifact["name"] == "web-build":
                 experiences_build_url = artifact["archive_download_url"]
-            elif artifact["name"] == "colors":
-                colors_build_url = artifact["archive_download_url"]
-
-        if not experiences_build_url or not colors_build_url:
-            raise RuntimeError("Missing web or colors build")
+                break
+        else:
+            raise RuntimeError("Missing web build")
 
         # Download the artifact
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             web_build_zip_path = temp_path / "web-build.zip"
-            colors_zip_path = temp_path / "colors.zip"
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Downloading artifacts"
             )
@@ -129,17 +125,6 @@ def handle_workflow_run_completed(event):
                     str(web_build_zip_path),
                 ]
             )
-            subprocess.run(
-                [
-                    "curl",
-                    "-H",
-                    f"Authorization: token {GITHUB_ACCESS_TOKEN}",
-                    "-L",
-                    colors_build_url,
-                    "-o",
-                    str(colors_zip_path),
-                ]
-            )
 
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Extracting artifacts"
@@ -148,7 +133,6 @@ def handle_workflow_run_completed(event):
             subprocess.run(
                 ["unzip", str(web_build_zip_path), "-d", str(temp_path / "build")]
             )
-            subprocess.run(["unzip", str(colors_zip_path), "-d", str(temp_path)])
 
             # rsync the build directory to the target directory
             set_commit_status(
@@ -164,23 +148,6 @@ def handle_workflow_run_completed(event):
                     "--delete",
                     f'{str(temp_path / "build")}/',
                     str(target.web_path),
-                ]
-            )
-
-            set_commit_status(
-                repository_name, sha, "pending", event_name, "Copying colors"
-            )
-            # rsync colors.json to the target directory
-            print(f"rsync {str(temp_path)}/colors.json {str(target.colors_path)}")
-            subprocess.run(
-                [
-                    "rsync",
-                    "-e",
-                    rsync_ssh_production_command(),
-                    "-a",
-                    "--delete",
-                    str(temp_path / "colors.json"),
-                    str(target.colors_path),
                 ]
             )
 
