@@ -352,10 +352,15 @@ def handle_workflow_job_queued(event):
 
     run_response = github_get_request(workflow_job["run_url"])
     event_name = run_response["name"]
-    if run_response["event"] != "push" or event_name not in [
-        "build-experiences",
-        "build-controls",
-    ]:
+    if (
+        run_response["event"] != "push"
+        or event_name
+        not in [
+            "build-experiences",
+            "build-controls",
+        ]
+        or run_response["branch"] not in config.targets
+    ):
         return
 
     sha = workflow_job["head_sha"]
