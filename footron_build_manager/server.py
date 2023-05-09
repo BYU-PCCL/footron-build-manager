@@ -53,6 +53,14 @@ def reload_controller(target):
     reload_response.raise_for_status()
 
 
+def check_controller_connection(target):
+    # This is a very simple stopgap to prevent a corrupted state when a target
+    # machine is not running; all this is meant to do is raise an error when
+    # things don't work
+    current_experience_response = requests.get(urljoin(target.controller_api_url, "current"))
+    current_experience_response.raise_for_status()
+
+
 def set_commit_status(repository_name, sha, state, context, description=None):
     github.get_repo(repository_name).get_commit(sha).create_status(
         state, context=f"footron-ci/{context}", description=description
@@ -88,6 +96,12 @@ def handle_workflow_run_completed(event):
 
     if event_name not in ["build-controls", "build-experiences"]:
         raise HTTPException(status_code=400, detail="Unknown event name")
+
+    try:
+        check_controller_connection(target)
+    except requests.RequestException:
+        set_commit_status(repository_name, sha, "failure", event_name, "Failed to connect")
+        raise
 
     # Start timer
     start_time = time.time()
