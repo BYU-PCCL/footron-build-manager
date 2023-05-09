@@ -57,7 +57,9 @@ def check_controller_connection(target):
     # This is a very simple stopgap to prevent a corrupted state when a target
     # machine is not running; all this is meant to do is raise an error when
     # things don't work
-    current_experience_response = requests.get(urljoin(target.controller_api_url, "current"))
+    current_experience_response = requests.get(
+        urljoin(target.controller_api_url, "current")
+    )
     current_experience_response.raise_for_status()
 
 
@@ -100,7 +102,9 @@ def handle_workflow_run_completed(event):
     try:
         check_controller_connection(target)
     except requests.RequestException:
-        set_commit_status(repository_name, sha, "failure", event_name, "Failed to connect")
+        set_commit_status(
+            repository_name, sha, "failure", event_name, "Failed to connect"
+        )
         raise
 
     # Start timer
