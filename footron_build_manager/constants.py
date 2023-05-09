@@ -14,3 +14,5 @@ CONFIG_PATH = Path(
 DATA_PATH = Path(
     os.environ.get("FT_DATA_PATH") or XDG_DATA_HOME / "footron" / "build.json"
 )
+
+MAX_DOWNLOAD_ARTIFACT_RETRIES = 10

@@ -15,7 +15,11 @@ from fastapi import FastAPI, HTTPException, Request
 from github import Github
 
 from .config import load_config
-from .constants import GITHUB_WEBHOOK_SECRET, GITHUB_ACCESS_TOKEN
+from .constants import (
+    GITHUB_WEBHOOK_SECRET,
+    GITHUB_ACCESS_TOKEN,
+    MAX_DOWNLOAD_ARTIFACT_RETRIES,
+)
 from .data import load_build_data, Target as DataTarget, save_build_data
 
 app = FastAPI()
@@ -131,18 +135,37 @@ def handle_workflow_run_completed(event):
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Downloading artifacts"
             )
-
-            subprocess.run(
-                [
-                    "curl",
-                    "-H",
-                    f"Authorization: token {GITHUB_ACCESS_TOKEN}",
-                    "-L",
-                    experiences_build_url,
-                    "-o",
-                    str(web_build_zip_path),
-                ]
-            )
+            download_artifact_retries = 0
+            while True:
+                try:
+                    subprocess.run(
+                        [
+                            "curl",
+                            "-H",
+                            f"Authorization: token {GITHUB_ACCESS_TOKEN}",
+                            "-L",
+                            experiences_build_url,
+                            "-o",
+                            str(web_build_zip_path),
+                        ]
+                    )
+                except subprocess.CalledProcessError:
+                    if download_artifact_retries < MAX_DOWNLOAD_ARTIFACT_RETRIES:
+                        download_artifact_retries += 1
+                        print(
+                            f"Failed to download artifact; retrying in 1 second... ({download_artifact_retries}/{MAX_DOWNLOAD_ARTIFACT_RETRIES})"
+                        )
+                        time.sleep(1)
+                        continue
+                    set_commit_status(
+                        repository_name,
+                        sha,
+                        "failure",
+                        event_name,
+                        "Failed to download controls artifact",
+                    )
+                    raise
+                break
 
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Extracting artifacts"
@@ -183,32 +206,73 @@ def handle_workflow_run_completed(event):
                 experiences_build_url = artifact["archive_download_url"]
                 break
         else:
+            set_commit_status(
+                repository_name,
+                sha,
+                "failure",
+                event_name,
+                "Missing experiences build",
+            )
             raise RuntimeError("Missing experiences build")
 
+        # Download the artifact using the access token in a curl header
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            web_build_zip_path = temp_path / "experiences.zip"
-            # Download the artifact using the access token in a curl header
+            experience_build_zip_path = temp_path / "experiences.zip"
+
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Downloading artifacts"
             )
-            subprocess.run(
-                [
-                    "curl",
-                    "-H",
-                    f"Authorization: token {GITHUB_ACCESS_TOKEN}",
-                    "-L",
-                    experiences_build_url,
-                    "-o",
-                    str(web_build_zip_path),
-                ]
-            )
+            download_artifact_retries = 0
+            while True:
+                try:
+                    subprocess.run(
+                        [
+                            "curl",
+                            "-H",
+                            f"Authorization: token {GITHUB_ACCESS_TOKEN}",
+                            "-L",
+                            experiences_build_url,
+                            "-o",
+                            str(experience_build_zip_path),
+                        ]
+                    ).check_returncode()
+                except subprocess.CalledProcessError:
+                    if download_artifact_retries < MAX_DOWNLOAD_ARTIFACT_RETRIES:
+                        download_artifact_retries += 1
+                        print(
+                            f"Failed to download artifact; retrying in 1 second... ({download_artifact_retries}/{MAX_DOWNLOAD_ARTIFACT_RETRIES})"
+                        )
+                        time.sleep(1)
+                        continue
+                    set_commit_status(
+                        repository_name,
+                        sha,
+                        "failure",
+                        event_name,
+                        "Failed to download expereinces artifact",
+                    )
+                    raise
+                break
 
             # Extract the artifacts
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Extracting artifacts"
             )
-            subprocess.run(["unzip", str(web_build_zip_path), "-d", temp_path])
+
+            try:
+                subprocess.run(
+                    ["unzip", str(experience_build_zip_path), "-d", temp_path]
+                ).check_returncode()
+            except subprocess.CalledProcessError:
+                set_commit_status(
+                    repository_name,
+                    sha,
+                    "failure",
+                    event_name,
+                    "Failed to unzip web build",
+                )
+                raise
 
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Comparing hashes"
@@ -252,22 +316,42 @@ def handle_workflow_run_completed(event):
                 # rm -rf the hash directory on the target host, or the current host
                 #  if the host isn't specified
                 if controller_host:
-                    subprocess.run(
-                        [
-                            "ssh",
-                            *shlex.split(ssh_production_option()),
-                            controller_host,
-                            f"rm -rf {controller_fs_path}/experiences/{hash_key}",
-                        ]
-                    )
+                    try:
+                        subprocess.run(
+                            [
+                                "ssh",
+                                *shlex.split(ssh_production_option()),
+                                controller_host,
+                                f"rm -rf {controller_fs_path}/experiences/{hash_key}",
+                            ]
+                        ).check_returncode()
+                    except subprocess.CalledProcessError:
+                        set_commit_status(
+                            repository_name,
+                            sha,
+                            "failure",
+                            event_name,
+                            "Failed to delete removed experiences on remote host",
+                        )
+                        raise
                 else:
-                    subprocess.run(
-                        [
-                            "rm",
-                            "-rf",
-                            f"{controller_fs_path}/experiences/{hash_key}",
-                        ]
-                    )
+                    try:
+                        subprocess.run(
+                            [
+                                "rm",
+                                "-rf",
+                                f"{controller_fs_path}/experiences/{hash_key}",
+                            ]
+                        ).check_returncode()
+                    except subprocess.CalledProcessError:
+                        set_commit_status(
+                            repository_name,
+                            sha,
+                            "failure",
+                            event_name,
+                            "Failed to delete removed experiences on local host",
+                        )
+                        raise
 
             set_commit_status(
                 repository_name,
@@ -278,20 +362,30 @@ def handle_workflow_run_completed(event):
             )
             for hash_key in changed_hashes | new_hashes:
                 # rsync the changed directory to the directory on the target host
-                subprocess.run(
-                    [
-                        "rsync",
-                        "-avP",
-                        "--delete",
-                        "-e",
-                        rsync_ssh_production_command(),
-                        # Hack to avoid dealing with video files for now
-                        "--exclude=*.mp4",
-                        "--exclude=*.webm",
-                        f'{str(temp_path / "experiences" / hash_key)}/',
-                        f"{target.controller_path}/experiences/{hash_key}",
-                    ]
-                )
+                try:
+                    subprocess.run(
+                        [
+                            "rsync",
+                            "-avP",
+                            "--delete",
+                            "-e",
+                            rsync_ssh_production_command(),
+                            # Hack to avoid dealing with video files for now
+                            "--exclude=*.mp4",
+                            "--exclude=*.webm",
+                            f'{str(temp_path / "experiences" / hash_key)}/',
+                            f"{target.controller_path}/experiences/{hash_key}",
+                        ]
+                    ).check_returncode()
+                except subprocess.CalledProcessError:
+                    set_commit_status(
+                        repository_name,
+                        sha,
+                        "failure",
+                        event_name,
+                        f"Failed to sync experience '{hash_key}' to target",
+                    )
+                    raise
 
             data.targets[branch].hashes = hashes
             save_build_data(data)
@@ -299,25 +393,45 @@ def handle_workflow_run_completed(event):
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Syncing editorial configs"
             )
-            subprocess.run(
-                [
-                    "rsync",
-                    "-avP",
-                    "--delete",
-                    "-e",
-                    rsync_ssh_production_command(),
-                    *(
-                        f"{str(temp_path)}/{file}.toml"
-                        for file in ["folders", "tags", "collections"]
-                    ),
-                    str(target.controller_path),
-                ]
-            )
+            try:
+                subprocess.run(
+                    [
+                        "rsync",
+                        "-avP",
+                        "--delete",
+                        "-e",
+                        rsync_ssh_production_command(),
+                        *(
+                            f"{str(temp_path)}/{file}.toml"
+                            for file in ["folders", "tags", "collections"]
+                        ),
+                        str(target.controller_path),
+                    ]
+                ).check_returncode()
+            except subprocess.CalledProcessError:
+                set_commit_status(
+                    repository_name,
+                    sha,
+                    "failure",
+                    event_name,
+                    "Failed to sync editorial configs",
+                )
+                raise
 
             set_commit_status(
                 repository_name, sha, "pending", event_name, "Reloading controller"
             )
-            reload_controller(target)
+            try:
+                reload_controller(target)
+            except requests.RequestException:
+                set_commit_status(
+                    repository_name,
+                    sha,
+                    "failure",
+                    event_name,
+                    "Failed to reload controller",
+                )
+                raise
 
     # "Successful in {}s"
     set_commit_status(
